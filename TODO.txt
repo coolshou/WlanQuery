@@ -1,0 +1,4 @@
+0. self update checker
+1. max bsslist only 128 ?? site survey wait time?
+2. GUI
+2.1. scan interval for GUI
