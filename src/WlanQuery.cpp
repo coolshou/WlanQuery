@@ -723,6 +723,9 @@ int wmain()
 					case dot11_phy_type_ofdm:
 						wprintf(L"%ls  ", L"11a");
 						break;
+					case dot11_phy_type_hrdsss:
+						wprintf(L"%ls  ", L"11b");					
+						break;
 					case dot11_phy_type_erp:
 						wprintf(L"%ls  ", L"11g");
 						break;
