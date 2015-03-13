@@ -1,31 +1,234 @@
 #ifndef UNICODE
 #define UNICODE
 #endif
+#ifndef  _WIN32_WINNT
+#define  _WIN32_WINNT _WIN32_WINNT_WINXP
+#endif
 
-#include<iostream>
-using namespace std;
+#pragma comment(lib, "version.lib")
+// Need to link with Wlanapi.lib and Ole32.lib
+//XP x64 SP2 did not have wlanapi.dll in system32? why?
+#pragma comment(lib, "wlanapi.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "Wininet.lib")
+
+#include <iostream>
+
+//#include "GlobalFunctions.h"
+#include <atlstr.h>
 
 #include <windows.h>
 #include <wlanapi.h>
 #include <Windot11.h>           // for DOT11_SSID struct
 #include <objbase.h>
 #include <wtypes.h>
-
+#include <string>
 #include <atlbase.h>
 
-//#include <wchar.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-// Need to link with Wlanapi.lib and Ole32.lib
-//XP x64 SP2 did not have wlanapi.dll in system32? why?
-#pragma comment(lib, "wlanapi.lib")
-#pragma comment(lib, "ole32.lib")
+#include <WinInet.h>
+using namespace std;
 
 BOOL bWait = true;
 BOOL bIsWindowsVistaorLater;
+
+//OID createfile handle
 HANDLE hClientHandle;
 TCHAR CurrentMACAddressStr[256]; 
+
+//WinINet
+BOOL checkUpdate()
+{
+	DWORD nErrorNo;
+	HINTERNET hOpen, hURLFile;
+	LPCWSTR NameProgram = L"WlanQuery";             //      LPCWSTR == Long Pointer to Const Wide String 
+	LPCWSTR Website = L"https://github.com/coolshou/WlanQuery/releases/latest";
+	//CString MyHttpServer=L"";
+	hOpen = InternetOpen(NameProgram, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0 );
+	if ( !hOpen) {
+		nErrorNo = GetLastError(); // 得到錯誤代碼
+		LPSTR lpBuffer;    
+		FormatMessage ( FORMAT_MESSAGE_ALLOCATE_BUFFER  |
+		    FORMAT_MESSAGE_IGNORE_INSERTS  |
+			FORMAT_MESSAGE_FROM_SYSTEM,
+			NULL,
+			nErrorNo, // 此乃錯誤代碼，通常在程序中可由 GetLastError()得之
+			LANG_NEUTRAL,
+			(LPTSTR) & lpBuffer,
+			0 ,
+			NULL );
+		//cerr << "Error in opening internet" << endl;
+		wprintf(L"Error in opening internet: %s\n", lpBuffer);
+		InternetCloseHandle(hOpen);
+		//  Free the buffer.
+		LocalFree (lpBuffer);
+		return false;
+    }
+	//https://msdn.microsoft.com/en-us/library/windows/desktop/aa385098%28v=vs.85%29.aspx
+	hURLFile = InternetOpenUrl( 
+		hOpen, 								//The handle to the current Internet session. The handle must have been returned by a previous call to InternetOpen.
+		Website, 							//A pointer to a null-terminated string variable that specifies the URL to begin reading. Only URLs beginning with ftp:, http:, https: are supported.	
+		NULL, 								//A pointer to a null-terminated string that specifies the headers to be sent to the HTTP server
+		NULL, 								//The size of the additional headers, in TCHARs
+		INTERNET_FLAG_SECURE | 				//flag: SSL,
+		INTERNET_FLAG_RELOAD | INTERNET_FLAG_DONT_CACHE,	// RELOAD, NO CACHE
+		NULL 								//A pointer to a variable that specifies the application-defined value that is passed, along with the returned handle, to any callback functions.
+	);            //Need to open the URL    
+	if(!hURLFile) {
+		//TODO: error on network can not access
+		nErrorNo = GetLastError(); // 得到錯誤代碼
+		if(nErrorNo!=0)
+		{
+			if(nErrorNo==ERROR_INTERNET_EXTENDED_ERROR)
+			{
+				wstring wstrBuffer;
+				DWORD bufferLength;
+				InternetGetLastResponseInfo(&nErrorNo,NULL,&bufferLength);
+				wstrBuffer.resize( bufferLength + 1 );
+				InternetGetLastResponseInfo(&nErrorNo,&wstrBuffer[0],&bufferLength);
+			} else {
+				LPSTR lpBuffer; 
+				FormatMessage ( FORMAT_MESSAGE_ALLOCATE_BUFFER  |
+					FORMAT_MESSAGE_IGNORE_INSERTS  |
+					FORMAT_MESSAGE_FROM_SYSTEM,
+					NULL,
+					nErrorNo, // 此乃錯誤代碼，通常在程序中可由 GetLastError()得之
+					LANG_NEUTRAL,
+					(LPTSTR) & lpBuffer,
+					0 ,
+					NULL );
+				wprintf(L"Error in opening Website: %s\n %s\n", Website, lpBuffer);
+				LocalFree (lpBuffer);
+			}
+			
+		}
+		InternetCloseHandle(hURLFile);
+		InternetCloseHandle(hOpen);
+		//  Free the buffer.
+
+		return false;
+	}
+	//TODO: buffer size handle?
+	/* output is ?????
+	//Pointer to dynamic buffer.
+    //char *data = 0;
+    //Dynamic data size.
+	DWORD dwBytesRead = 0 ;
+    //DWORD dataSize = 0;
+	std::string output;
+	do {
+		char buffer[2000];
+        InternetReadFile(hURLFile, (LPVOID) buffer, _countof(buffer), &dwBytesRead);
+        //Allocate more space.
+        //char *tempData = new char[dataSize + dwBytesRead];
+        //Copy the already-fetched data into the new buffer.
+        //memcpy(tempData, data, dataSize);
+        //Now copy the new chunk of data.
+        //memcpy(tempData + dataSize, buffer, dwBytesRead);
+        //Now update the permanent variables
+        //delete[] data;
+        //data = tempData;
+        //dataSize += dwBytesRead;
+		output.append(buffer, dwBytesRead);
+	} while (dwBytesRead);
+	//TODO: parser data
+	wprintf(L"TODO: parser data: %s\n", output);
+	*/
+	//dump content to file 
+	
+	DWORD dwBytesRead;
+    VOID * szTemp[25];
+	FILE * pFile ;
+	CHAR *szFileName = "tmp.html";
+	if  ( !(pFile = fopen (szFileName, "wb" ) ) )
+	{
+		cerr << "Error !" << endl;
+		return FALSE;
+	}
+	do {
+		// Keep coping in 25 bytes chunks, while file has any data left.
+        // Note: bigger buffer will greatly improve performance.
+        if (!InternetReadFile (hURLFile, szTemp, 100,  &dwBytesRead) )
+        {
+            fclose (pFile);
+            cerr << "Error !" << endl;
+			return FALSE;
+        }
+        if (!dwBytesRead)
+            break;  // Condition of dwSize=0 indicate EOF. Stop.
+        else
+            fwrite(szTemp, sizeof (char), dwBytesRead , pFile);
+	}while (TRUE);
+	fflush (pFile);
+    fclose (pFile);
+	
+	//end file
+
+	/*
+	InternetReadFile(hURLFile, fileBuffer, 100, &dwBytesRead);
+	while (dwBytesRead == 100)
+	{
+		InternetReadFile(hURLFile, fileBuffer, 100, &dwBytesRead);
+		fileBuffer[dwBytesRead] = '\0';
+		cout << fileBuffer;
+	}
+	*/
+	cout << endl;
+	InternetCloseHandle(hURLFile);
+	InternetCloseHandle(hOpen);
+	return true;
+
+}
+
+/*get file*/
+/*
+inet_service = create inet
+data = create u_inetresult
+inet_service.geturl("http://test.com/a.pdf",data)
+
+li_fln = FileOpen(as_FileName, StreamMode!, Write!, LockReadWrite!,
+Replace!)
+If li_fln < 0 Then Return -1 // Can't Open File to Modify
+
+ll_StrLen = Len(data)
+
+If ll_StrLen > 32765 Then
+ If Mod(ll_StrLen, 32765) = 0 Then
+  li_return = ll_StrLen / 32765
+ Else
+  li_return = (ll_StrLen / 32765) + 1
+ End if
+Else
+ li_return = 1
+End if
+
+ll_CurrentPos = 1
+
+For li_Cnt = 1 To li_return
+ ls_record = Mid(ls_file, ll_CurrentPos, 32765)
+ ll_CurrentPos += 32765
+ If FileWrite(li_fln, ls_record) = -1 Then
+  Return // Can't write
+ End if
+Next
+
+FileClose(li_fln)
+*/
+CString getVersion()
+{
+	/*
+	CString current_version(_T(""));
+	current_version = CGlobalFunctions::GetFileVersionX();
+	/*
+	wprintf( L"FileVersion: %s\nProductVersion: %s\nMyPrivateInfo: %s", 
+             CGlobalFunctions::GetFileVersionX(), 
+             CGlobalFunctions::GetProductVersionX(),
+             CGlobalFunctions::GetVersionInfo(NULL, "MyPrivateInfo"));
+			*/
+	return "0";
+} 
 
 BOOL checkVistaAbove()
 {
@@ -44,6 +247,7 @@ BOOL checkVistaAbove()
     return true;
 }
 
+/*
 //TODO
 ULONG getChannel(HANDLE *hClient, const GUID *pInterfaceGuid) 
 {
@@ -72,7 +276,7 @@ ULONG getChannel(HANDLE *hClient, const GUID *pInterfaceGuid)
 	}
 	return dwRetVal;
 }
-
+*/
 //TODO
 ULONG getRSSI(HANDLE* hClient, const GUID *pInterfaceGuid) 
 {
@@ -139,11 +343,7 @@ INT ShowConnectedAPwithNDIS(WCHAR* wsNICGUIDinString )
 	ULONG	ulOIDCode;
 
 	// open handle
-//	memset(wsNICGUIDinString, 0, 256);
-	memset(sNICIDFullPath, 0, 256);
-//	StringFromGUID2(pInterfaceList->InterfaceInfo[pInterfaceList->dwIndex].InterfaceGuid, 
-//						wsNICGUIDinString, 256);
-						
+	memset(sNICIDFullPath, 0, 256);				
 	sprintf_s(sNICIDFullPath, "\\\\.\\%S", wsNICGUIDinString);
 	hClientHandle = CreateFileA(sNICIDFullPath, GENERIC_READ | GENERIC_WRITE, 
 											FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -163,6 +363,14 @@ INT ShowConnectedAPwithNDIS(WCHAR* wsNICGUIDinString )
 	rtn = DeviceIoControl(hClientHandle, IOCTL_NDIS_QUERY_GLOBAL_STATS,
 							&ulOIDCode, sizeof(ulOIDCode), (ULONG *) &ndisESSID,
 							dwMemSize, &ulBytesReturned, NULL);
+	/*
+看起來很好使用，但是注意的是 IOCTL_NDIS_QUERY_GLOBAL_STATS 只是適合查詢(Query)，估計是出於安全的考慮，
+微軟沒有允許Set OID，因為這樣會更改到底層驅動的某些屬性。
+當然Vista開始，你可以使用與某個OID對應的WMI,比如對於 OID_802_11_BSSID_LIST_SCAN 你可以使用 WlanScan 函數，
+當然也有對應的 Ndis6.0 版本的 OID_DOT11_SCAN_REQUEST
+但是是不是可以在User Mode層使用這個OID，未可知。但是 WlanScan 是可以的。
+	*/
+	
 	if(rtn == 0)
 	{
 		wprintf(L"Error in DeviceIoControl\n");
@@ -309,7 +517,10 @@ int wmain()
         // You can use FormatMessage here to find out why the function failed
     }
 	checkVistaAbove();
-	
+	//TODO: use arg -c to check Update
+	//checkUpdate();
+	getVersion();
+
     dwResult = WlanEnumInterfaces(hClient, NULL, &pIfList);
     if (dwResult != ERROR_SUCCESS) {
         wprintf(L"WlanEnumInterfaces failed with error: %u\n", dwResult);
@@ -365,7 +576,7 @@ int wmain()
                 break;
             }
             wprintf(L"\n");
-
+			
             // If interface state is connected, call WlanQueryInterface
             // to get current connection attributes
             if (pIfInfo->isState == wlan_interface_state_connected) {
@@ -543,7 +754,7 @@ int wmain()
 						wprintf(L"    Transmission Rate:\t %ld\n",
 								pConnectInfo->wlanAssociationAttributes.ulTxRate);
 						//TODO: channel
-						getChannel(hClient,&pIfInfo->InterfaceGuid);
+						//getChannel(hClient,&pIfInfo->InterfaceGuid);
 						wprintf(L"\n");
 					}
                     
@@ -623,27 +834,31 @@ int wmain()
 				// Scan takes awhile so we need to register a callback
 				//Windows XP with SP3 and Wireless LAN API for Windows XP with SP2:  Only the wlan_notification_acm_connection_complete and wlan_notification_acm_disconnected notifications are available.
 				if(dwResult = WlanRegisterNotification(hClient, WLAN_NOTIFICATION_SOURCE_ACM, TRUE,
-				  (WLAN_NOTIFICATION_CALLBACK)WlanNotification, NULL, NULL, &dwPrevNotif) != ERROR_SUCCESS)
+				  (WLAN_NOTIFICATION_CALLBACK)WlanNotification, NULL, NULL, &dwPrevNotif) != ERROR_SUCCESS) {
 					throw("[x] Unable to register for notifications");
+				}
 	 
 				printf("[%d] Scanning for nearby networks...\n", i);
-				//The WlanScan function returns immediately and does not provide a notification when the scan is complete on Windows XP with SP3 or the Wireless LAN API for Windows XP with SP2. 
-				if(dwResult = WlanScan(hClient, &pIfInfo->InterfaceGuid, NULL, NULL, NULL) != ERROR_SUCCESS)
+				//The WlanScan function returns immediately and does not provide a notification when the scan is complete on Windows XP with SP3 or the Wireless LAN API for Windows XP with SP2. (timeout after 4sec)
+				//TODO: does WlanScan (OID_802_11_BSSID_LIST_SCAN) is 
+				//This list includes BSSIDs for all BSSs responding on frequency channels that are permitted in the region in which the device is operating. The driver will return the contents of this list when queried by OID_802_11_BSSID_LIST.
+				//use OID_DOT11_SCAN_REQUEST
+				if(dwResult = WlanScan(hClient, &pIfInfo->InterfaceGuid, NULL, NULL, NULL) != ERROR_SUCCESS) {
 					throw("[x] Scan failed, check adapter is enabled");
-	         
-				// Yawn...
+				}
+				// 
 				UINT nRet;
 				MSG msg;
 				if (! bIsWindowsVistaorLater) {
 					printf("XP and below no support wlan_notification_acm_scan_complete\n");
-					//just wait 5 sec
-					nRet = SetTimer(NULL,0,10000,TimerProc);
+					//XP just wait 5 sec
+					nRet = SetTimer(NULL,0,5000,TimerProc);
 				}
-
+				bWait = true;
 				while(bWait) {
 					Sleep(100);
 					wprintf(L".");
-					//TODO?
+					//TODO: following will not let while keep out put "."
 					if (! bIsWindowsVistaorLater) {
 						//for SetTimer with NULL handle
 						GetMessage(&msg, NULL, 0, 0);
@@ -659,17 +874,161 @@ int wmain()
 				}
 			}
 			//WlanGetAvailableNetworkList
+			/*TODO: Get profile list for this interface?
+			dwResult = WlanGetAvailableNetworkList(hClient,  
+                &pIfInfo->InterfaceGuid,  
+                0,   
+                NULL,   
+                &pBssList);  
+			if (dwResult != ERROR_SUCCESS) {  
+                RETAILMSG(OUTPUT_LOGMSG,(L"WlanGetAvailableNetworkList failed with error: %u\r\n",  
+                    dwResult));  
+                dwRetVal = 1;  
+                // You can use FormatMessage to find out why the function failed   
+            } else {
+                RETAILMSG(OUTPUT_LOGMSG, (L"WLAN_AVAILABLE_NETWORK_LIST for this interface\r\n"));  
+                RETAILMSG(OUTPUT_LOGMSG,(L"Num Entries: %d\r\n", pBssList->dwNumberOfItems));  
+  
+                for (j = 0; j < pBssList->dwNumberOfItems; j++)   
+                {  
+                    pBssEntry = (WLAN_AVAILABLE_NETWORK *)&pBssList->Network[j];  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"  Profile Name[%u]:  %s\r\n", j, &pBssEntry->strProfileName));  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"  SSID[%u]:\t\t ", j));  
+                    if (pBssEntry->dot11Ssid.uSSIDLength == 0)  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"\r\n"));  
+                    else   
+                    {   
+                        CString str = _T("");  
+                        str = pBssEntry->dot11Ssid.ucSSID;  
+                      
+  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"%s\r\n", str));  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"%s\r\n", &pBssEntry->dot11Ssid.ucSSID));  
+                    }  
+  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"BSS Network type[%u]:\t ", j));  
+                    switch (pBssEntry->dot11BssType)  
+                    {  
+                    case dot11_BSS_type_infrastructure   :  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"Infrastructure (%u)\r\n", pBssEntry->dot11BssType));  
+                        break;  
+                    case dot11_BSS_type_independent:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"Infrastructure (%u)\r\n", pBssEntry->dot11BssType));  
+                        break;  
+                    default:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"Other (%lu)\r\n", pBssEntry->dot11BssType));  
+                        break;  
+                    }  
+  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"  Number of BSSIDs[%u]:\t %u\r\n", j, pBssEntry->uNumberOfBssids));  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"  Connectable[%u]:\t ", j));  
+                    if (pBssEntry->bNetworkConnectable)  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"Yes\r\n"));  
+                    else   
+                    {  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"No\r\n"));  
+                        RETAILMSG(OUTPUT_LOGMSG,(L" Not connectable WLAN_REASON_CODE value[%u]:\t %u\r\n", j,   
+                            pBssEntry->wlanNotConnectableReason));  
+                    }          
+  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"Number of PHY types supported[%u]:\t %u\r\n", j, pBssEntry->uNumberOfPhyTypes));  
+  
+                    if (pBssEntry->wlanSignalQuality == 0)  
+                        iRSSI = -100;  
+                    else if (pBssEntry->wlanSignalQuality == 100)     
+                        iRSSI = -50;  
+                    else  
+                        iRSSI = -100 + (pBssEntry->wlanSignalQuality/2);      
+  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"  Signal Quality[%u]:\t %u (RSSI: %i dBm)\r\n", j,   
+                        pBssEntry->wlanSignalQuality, iRSSI));  
+  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"  Security Enabled[%u]:\t ", j));  
+                    if (pBssEntry->bSecurityEnabled)  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"Yes\r\n"));  
+                    else  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"No\r\n"));  
+                    //身份驗證類型   
+                    RETAILMSG(OUTPUT_LOGMSG,(L"  Default AuthAlgorithm[%u]: ", j));  
+                    switch (pBssEntry->dot11DefaultAuthAlgorithm)   
+                    {  
+                    case DOT11_AUTH_ALGO_80211_OPEN:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"802.11 Open (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
+                        break;  
+                    case DOT11_AUTH_ALGO_80211_SHARED_KEY:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"802.11 Shared (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
+                        break;  
+                    case DOT11_AUTH_ALGO_WPA:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"WPA (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
+                        break;  
+                    case DOT11_AUTH_ALGO_WPA_PSK:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"WPA-PSK (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
+                        break;  
+                    case DOT11_AUTH_ALGO_WPA_NONE:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"WPA-None (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
+                        break;  
+                    case DOT11_AUTH_ALGO_RSNA:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"RSNA (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
+                        break;  
+                    case DOT11_AUTH_ALGO_RSNA_PSK:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"RSNA with PSK(%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
+                        break;  
+                    default:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"Other (%lu)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
+                        break;  
+                    }  
+  
+                    //加密類型   
+                    RETAILMSG(OUTPUT_LOGMSG,(L"  Default CipherAlgorithm[%u]: ", j));  
+                    switch (pBssEntry->dot11DefaultCipherAlgorithm)   
+                    {  
+                    case DOT11_CIPHER_ALGO_NONE:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"None (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
+                        break;  
+                    case DOT11_CIPHER_ALGO_WEP40:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"WEP-40 (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
+                        break;  
+                    case DOT11_CIPHER_ALGO_TKIP:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"TKIP (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
+                        break;  
+                    case DOT11_CIPHER_ALGO_CCMP:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"CCMP (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
+                        break;  
+                    case DOT11_CIPHER_ALGO_WEP104:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"WEP-104 (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
+                        break;  
+                    case DOT11_CIPHER_ALGO_WEP:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"WEP (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
+                        break;  
+                    default:  
+                        RETAILMSG(OUTPUT_LOGMSG,(L"Other (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
+                        break;  
+                    }  
+  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"  Flags[%u]:\t 0x%x", j, pBssEntry->dwFlags));  
+                    if (pBssEntry->dwFlags)   
+                    {  
+                        if (pBssEntry->dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED)  
+                            RETAILMSG(OUTPUT_LOGMSG,(L" - Currently connected"));  
+                        if (pBssEntry->dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED)  
+                            RETAILMSG(OUTPUT_LOGMSG,(L" - Has profile"));  
+                    }     
+                    RETAILMSG(OUTPUT_LOGMSG,(L"\r\n"));  
+  
+                    RETAILMSG(OUTPUT_LOGMSG,(L"\r\n"));  
+				}//for (j = 0; j < pBssList->dwNumberOfItems; j++)   
+			*/
             //WlanGetNetworkBssList, Vista above
 			char *pReserved=NULL;
 			DOT11_BSS_TYPE dot11BssType = dot11_BSS_type_any;
 
 			dwResult = WlanGetNetworkBssList(hClient,
-										&pIfInfo->InterfaceGuid,
-										NULL,
-										dot11BssType,
-										NULL,
-										pReserved, 
-										&pBssList);
+				&pIfInfo->InterfaceGuid,
+				NULL,
+				dot11BssType,
+				NULL,
+				pReserved, 
+				&pBssList);
 
 			if (dwResult != ERROR_SUCCESS) {
 				wprintf(L"WlanGetNetworkBssList failed with error: %u\n",

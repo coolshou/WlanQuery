@@ -1,4 +1,24 @@
+BUG:
+0. on DWA-192 scan only get 5G AP? why
+	http://www.codeproject.com/Messages/506884/DeviceIoControl-amp-OID_802_11_BSSID_LIST_SCAN.aspx
+
+New function:
 0. self update checker
-1. max bsslist only 128 ?? site survey wait time?
-2. GUI
-2.1. scan interval for GUI
+ 0.1 by query https://github.com/coolshou/WlanQuery/releases/latest
+	=> https://github.com/coolshou/WlanQuery/releases/tag/v1.2015.2.12
+	=> download https://github.com/coolshou/WlanQuery/releases/download/v1.2015.2.12/WlanQuery.exe
+	VC http get request
+	http://support.microsoft.com/kb/815657
+ 0.2 get self exe file version
+ 0.3 download and update self exe
+	https://msdn.microsoft.com/en-us/library/yw3yyscd%28v=vs.90%29.aspx
+	http://stackoverflow.com/questions/2699562/https-and-c-not-an-easy-match
+	http://www.cplusplus.com/forum/windows/62128/
+	https://msdn.microsoft.com/en-us/library/windows/desktop/aa385098%28v=vs.85%29.aspx
+	https://msdn.microsoft.com/en-us/library/windows/desktop/aa385103%28v=vs.85%29.aspx
+	http://www.cppblog.com/automateprogram/archive/2010/06/16/118030.html
+1. multi device support
+3. GUI
+ 3.1. scan interval for GUI
+ 3.2. native wifi profile list
+ 3.3. moniter device plugin/pullout (device list update)
