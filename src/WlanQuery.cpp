@@ -27,12 +27,27 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <versionhelpers.h>
 
 #include <WinInet.h>
 using namespace std;
 
 BOOL bWait = true;
+BOOL bIsWindowsXPorLater;
 BOOL bIsWindowsVistaorLater;
+BOOL bIsWindows7Later;
+BOOL bIsWindows8Later;
+bool bIsWindows81Later;
+bool bIsWindows10Later;
+
+//GUID and handle list
+#include <vector>
+#include <algorithm>
+struct GUIDHandle {
+   WCHAR*  id;
+   HANDLE hClientHandle;
+};
+vector<struct GUIDHandle> vGUIDHandle;
 
 //OID createfile handle
 HANDLE hClientHandle;
@@ -48,7 +63,7 @@ BOOL checkUpdate()
 	//CString MyHttpServer=L"";
 	hOpen = InternetOpen(NameProgram, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0 );
 	if ( !hOpen) {
-		nErrorNo = GetLastError(); // 得到錯誤代碼
+		DWORD nErrorNo = GetLastError(); // 得到錯誤代碼
 		LPSTR lpBuffer;    
 		FormatMessage ( FORMAT_MESSAGE_ALLOCATE_BUFFER  |
 		    FORMAT_MESSAGE_IGNORE_INSERTS  |
@@ -67,6 +82,8 @@ BOOL checkUpdate()
 		return false;
     }
 	//https://msdn.microsoft.com/en-us/library/windows/desktop/aa385098%28v=vs.85%29.aspx
+	//TODO: async open url or call back function
+	//TODO: error handle
 	hURLFile = InternetOpenUrl( 
 		hOpen, 								//The handle to the current Internet session. The handle must have been returned by a previous call to InternetOpen.
 		Website, 							//A pointer to a null-terminated string variable that specifies the URL to begin reading. Only URLs beginning with ftp:, http:, https: are supported.	
@@ -216,6 +233,28 @@ Next
 
 FileClose(li_fln)
 */
+
+/*
+No matter if you use GetVersionEx() or RtlGetVersion(). Both will return the WRONG OS version if the user has right clicked your EXE and in 'Properties' -> 'Compatibility Mode' has chosen an older operating system.
+*/
+// RTL_OSVERSIONINFOEXW is defined in winnt.h
+BOOL GetOsVersion(RTL_OSVERSIONINFOEXW* pk_OsVer)
+{
+	typedef LONG(WINAPI* tRtlGetVersion)(RTL_OSVERSIONINFOEXW*);
+
+	memset(pk_OsVer, 0, sizeof(RTL_OSVERSIONINFOEXW));
+	pk_OsVer->dwOSVersionInfoSize = sizeof(RTL_OSVERSIONINFOEXW);
+
+	HMODULE h_NtDll = GetModuleHandleW(L"ntdll.dll");
+	tRtlGetVersion f_RtlGetVersion = (tRtlGetVersion)GetProcAddress(h_NtDll, "RtlGetVersion");
+
+	if (!f_RtlGetVersion)
+		return FALSE; // This will never happen (all processes load ntdll.dll)
+
+	LONG Status = f_RtlGetVersion(pk_OsVer);
+	return Status == 0; // STATUS_SUCCESS;
+}
+
 CString getVersion()
 {
 	/*
@@ -233,17 +272,44 @@ CString getVersion()
 BOOL checkVistaAbove()
 {
 	OSVERSIONINFO osvi;
-    BOOL bIsWindowsXPorLater;
 
     ZeroMemory(&osvi, sizeof(OSVERSIONINFO));
     osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
 
     GetVersionEx(&osvi);
+	wprintf(L"System version(Major,Minor): %d , %d\n", osvi.dwMajorVersion, osvi.dwMinorVersion);
+	bIsWindowsXPorLater =
+		((osvi.dwMajorVersion > 5) ||
+		((osvi.dwMajorVersion == 5) && (osvi.dwMinorVersion >= 1)));
 
     bIsWindowsVistaorLater = 
        ( (osvi.dwMajorVersion > 6) ||
        ( (osvi.dwMajorVersion == 6) && (osvi.dwMinorVersion >= 0) ));
-       
+	bIsWindows7Later =
+		((osvi.dwMajorVersion > 6) ||
+		((osvi.dwMajorVersion == 6) && (osvi.dwMinorVersion >= 1)));
+	bIsWindows8Later =
+		((osvi.dwMajorVersion > 6) ||
+		((osvi.dwMajorVersion == 6) && (osvi.dwMinorVersion >= 2)));
+	bIsWindows81Later =
+		((osvi.dwMajorVersion > 6) ||
+		((osvi.dwMajorVersion == 6) && (osvi.dwMinorVersion >= 3)));
+	bIsWindows10Later =
+		((osvi.dwMajorVersion > 10) ||
+		((osvi.dwMajorVersion == 10) && (osvi.dwMinorVersion >= 0)));
+
+	/*
+	Applications not manifested for Windows 8.1 or Windows 10 will return the Windows 8 OS version value (6.2). Once an application is manifested for a given operating system version, GetVersionEx will always return the version that the application is manifested for in future releases.
+	use Version Helper functions
+	https://msdn.microsoft.com/zh-tw/library/windows/desktop/dn424972%28v=vs.85%29.aspx
+	These APIs are defined by versionhelpers.h, which is included in the Windows 8.1 software development kit (SDK)
+	if (bIsWindows8Later) {
+		//win8.1 sdk
+		bIsWindows81Later = IsWindows8Point1OrGreater();
+		//win10 sdk
+		//bIsWindows10Later = IsWindows10OrGreater;
+	}
+	*/
     return true;
 }
 
@@ -283,20 +349,32 @@ ULONG getRSSI(HANDLE* hClient, const GUID *pInterfaceGuid)
 	DWORD dwResult = 0;
 	ULONG dwRetVal = 0;
 	
-	DWORD rssiSize= sizeof(ULONG);
-	ULONG rssi=0;
+	LONG rssi=0;
+	DWORD dwSizeRssi = sizeof(rssi);
 	WLAN_OPCODE_VALUE_TYPE opCode = wlan_opcode_value_type_query_only;
 	
 	dwResult = WlanQueryInterface(hClient,
 								  pInterfaceGuid,
 								  wlan_intf_opcode_rssi,
 								  NULL,
-								  &rssiSize,
+								  &dwSizeRssi,
 								  (PVOID *) &rssi, 
 								  &opCode);
 
 	if (dwResult != ERROR_SUCCESS) {
-		wprintf(L"    WlanQueryInterface rssi failed with error: %u\n", dwResult);
+		DWORD nErrorNo = GetLastError(); // 得到錯誤代碼
+		LPSTR lpBuffer;
+		FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+			FORMAT_MESSAGE_IGNORE_INSERTS |
+			FORMAT_MESSAGE_FROM_SYSTEM,
+			NULL,
+			nErrorNo, // 此乃錯誤代碼，通常在程序中可由 GetLastError()得之
+			LANG_NEUTRAL,
+			(LPTSTR)& lpBuffer,
+			0, NULL);
+		wprintf(L"    WlanQueryInterface rssi failed with error(%u):(%i) %s\n", dwResult, nErrorNo, lpBuffer);
+
+		//wprintf(L"    WlanQueryInterface rssi failed with error: %u\n", dwResult);
 		dwRetVal = 0;
 		// You can use FormatMessage to find out why the function failed
 	} else {
@@ -322,6 +400,157 @@ USHORT freqToChannel(ULONG freq)
 	return ch;
 }
 
+//add GUID handle
+HANDLE AddGUIDHandle (WCHAR* wsNICGUIDinString)
+{
+	char	sNICIDFullPath[256];
+	HANDLE hCHandle;
+	// open handle
+	memset(sNICIDFullPath, 0, 256);				
+	sprintf_s(sNICIDFullPath, "\\\\.\\%S", wsNICGUIDinString);
+	//TODO: dwFlagsAndAttributes with FILE_FLAG_OVERLAPPED for asynchronous I/O
+	hCHandle = CreateFileA(sNICIDFullPath, GENERIC_READ | GENERIC_WRITE, 
+											FILE_SHARE_READ | FILE_SHARE_WRITE,
+											NULL, OPEN_EXISTING,
+											0, NULL) ;
+
+	if(hClientHandle == INVALID_HANDLE_VALUE)
+	{
+		wprintf(L"Error in CreateFileA\n");
+		return NULL;
+	}
+	//TODO: how to improve when struct is big!!
+	struct GUIDHandle sGH;
+	sGH.id = wsNICGUIDinString;
+	sGH.hClientHandle = hCHandle;
+	vGUIDHandle.push_back(sGH);
+	return hCHandle;
+}
+
+//check exist of GUIDHandle
+HANDLE IsExistGUIDHandle (WCHAR* wsNICGUIDinString)
+{
+	WCHAR *t;
+	HANDLE hCHandle = NULL;
+	//check exist
+	vector<struct GUIDHandle>::iterator iter = vGUIDHandle.begin();
+   for(iter; iter != vGUIDHandle.end(); ++iter) {
+	   t=iter->id;
+	   if ( t == wsNICGUIDinString ) {
+		   hCHandle = iter->hClientHandle;
+		   break;
+	   }
+   }
+   return hCHandle;
+}
+
+//Get GUID's Handle, when not exist, open a new one
+HANDLE GetGUIDHandle (WCHAR* wsNICGUIDinString)
+{
+	HANDLE hCHandle = NULL;
+
+	//check exist
+   hCHandle = IsExistGUIDHandle(wsNICGUIDinString);
+   if (hCHandle == NULL) {
+	  //create new one
+	  hCHandle = AddGUIDHandle(wsNICGUIDinString);
+   }
+   return hCHandle;
+}
+
+//Close GUIDHandle 
+//return: true: close OK
+//		 false: close fail
+bool CloseGUIDHandle (WCHAR* wsNICGUIDinString)
+{
+	bool rs = false;
+	WCHAR *t;
+	//int i=0;
+	HANDLE hCHandle = NULL;
+	//hCHandle = NULL;
+	//check exist
+	vector<struct GUIDHandle>::iterator iter = vGUIDHandle.begin();
+	for(iter; iter != vGUIDHandle.end(); ++iter) {
+		t=iter->id;
+		if ( t == wsNICGUIDinString ) {
+			hCHandle = iter->hClientHandle;
+			// close handle
+			if (hCHandle != NULL) {
+				rs = CloseHandle(hCHandle);
+			}
+			if (rs) {
+				//remove from vector
+				vGUIDHandle.erase(iter);
+			}
+			break;
+		}
+//		i++;
+	}
+	return rs;
+}
+//Close all open GUID Handle
+bool CloseAllGUIDHandle ()
+{
+	bool rs = false;
+	HANDLE hCHandle = NULL;
+	vector<struct GUIDHandle>::iterator iter = vGUIDHandle.begin();
+	for(iter; iter != vGUIDHandle.end(); ++iter) {
+		hCHandle = iter->hClientHandle;
+		if (hCHandle != NULL) {
+				rs = CloseHandle(hCHandle);
+		}
+		if (rs) {
+			//remove from vector
+			vGUIDHandle.erase(iter);
+		}
+	}
+	return rs;
+}
+
+DWORD DoWlanScan(WCHAR* wsNICGUIDinString)
+{
+	HANDLE hCHandle = NULL;
+	INT	rtn;
+	ULONG* test;
+	test = (ULONG*)VirtualAlloc(NULL, sizeof(ULONG) * 1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	hCHandle = GetGUIDHandle(wsNICGUIDinString);
+	if (hCHandle != NULL) {
+		ULONG	ulBytesReturned;
+		ULONG	ulOIDCode;
+		ulOIDCode = OID_802_11_BSSID_LIST_SCAN ;//action to perform , ndis 5.1
+		//use: OID_DOT11_SCAN_REQUEST ( DOT11_SCAN_REQUEST_V2)
+
+		//TODO: dwFlagsAndAttributes with FILE_FLAG_OVERLAPPED for asynchronous I/O
+		//lpOverlapped 
+		rtn = DeviceIoControl(
+				hCHandle, IOCTL_NDIS_QUERY_GLOBAL_STATS,
+				&ulOIDCode, sizeof(ulOIDCode),
+				(ULONG *)test, 0,
+//				(ULONG *)NULL, 0,
+                &ulBytesReturned,
+                NULL);
+		//Notice: it will need some time to do the scan
+		if(rtn == 0)
+		{
+			DWORD nErrorNo = GetLastError(); // 得到錯誤代碼
+			LPSTR lpBuffer;    
+			FormatMessage ( FORMAT_MESSAGE_ALLOCATE_BUFFER  |
+				FORMAT_MESSAGE_IGNORE_INSERTS  |
+				FORMAT_MESSAGE_FROM_SYSTEM,
+				NULL,
+				nErrorNo, // 此乃錯誤代碼，通常在程序中可由 GetLastError()得之
+				LANG_NEUTRAL,
+				(LPTSTR) & lpBuffer,
+				0 ,
+				NULL );
+			wprintf(L"Error in DoWlanScan DeviceIoControl:(%i) %s\n",nErrorNo, lpBuffer);
+			CloseGUIDHandle(wsNICGUIDinString);
+			return 1;
+		}
+
+	}
+	return 0;
+}
 /**
 * Show the connected AP info using the NDIS 802.11 IOCTLs.
 */
@@ -343,16 +572,9 @@ INT ShowConnectedAPwithNDIS(WCHAR* wsNICGUIDinString )
 	ULONG	ulOIDCode;
 
 	// open handle
-	memset(sNICIDFullPath, 0, 256);				
-	sprintf_s(sNICIDFullPath, "\\\\.\\%S", wsNICGUIDinString);
-	hClientHandle = CreateFileA(sNICIDFullPath, GENERIC_READ | GENERIC_WRITE, 
-											FILE_SHARE_READ | FILE_SHARE_WRITE,
-											NULL, OPEN_EXISTING,
-											0, NULL) ;
-
-	if(hClientHandle == INVALID_HANDLE_VALUE)
-	{
-		wprintf(L"Error in CreateFileA\n");
+	hClientHandle = GetGUIDHandle(wsNICGUIDinString);
+	if (hClientHandle == NULL) {
+		wprintf(L"Error in CreateFileA: %c\n", sNICIDFullPath);
 		return 0;
 	}
 
@@ -374,7 +596,8 @@ INT ShowConnectedAPwithNDIS(WCHAR* wsNICGUIDinString )
 	if(rtn == 0)
 	{
 		wprintf(L"Error in DeviceIoControl\n");
-		CloseHandle(hClientHandle);
+		//CloseHandle(hClientHandle);
+		CloseGUIDHandle(wsNICGUIDinString);
 		return rtn;
 	}
 	//memset(szCurrentESSID, 0, 256);
@@ -391,7 +614,8 @@ INT ShowConnectedAPwithNDIS(WCHAR* wsNICGUIDinString )
 	if(rtn == 0)
 	{
 		wprintf(L"Error in DeviceIoControl\n");
-		CloseHandle(hClientHandle);
+		//CloseHandle(hClientHandle);
+		CloseGUIDHandle(wsNICGUIDinString);
 		return rtn;
 	}
 	memset(szCurrentMACAddressStr, 0, 256);
@@ -423,12 +647,14 @@ INT ShowConnectedAPwithNDIS(WCHAR* wsNICGUIDinString )
 	if(rtn == 0)
 	{
 		wprintf(L"Error in DeviceIoControl\n");
-		CloseHandle(hClientHandle);
+		//CloseHandle(hClientHandle);
+		CloseGUIDHandle(wsNICGUIDinString);
 		return rtn;
 	}
 
 	// close handle
-	CloseHandle(hClientHandle);
+	//CloseHandle(hClientHandle);
+	//CloseGUIDHandle(wsNICGUIDinString);
 
 	iCurrentRSSI = ndisRSSI;
 	// MS computes link quality as follows;  
@@ -449,10 +675,6 @@ INT ShowConnectedAPwithNDIS(WCHAR* wsNICGUIDinString )
 	wprintf(L"    Link Quality   : %d\t\t \n", iCurrentLinkQuality);
 	//channel 
 	
-	//_tprintf("\n\n");
-	//_tprintf("Type 99 to continue ... ");
-	//_tscanf_s("%d", &iContinue);
-
 	return rtn;
 }
 
@@ -725,7 +947,7 @@ int wmain()
 						case dot11_phy_type_ht:
 							wprintf(L"802.11n PHY type\n");
 							break;
-						case 8: //sdk8.1 dot11_phy_type_vht:
+						case dot11_phy_type_vht: //sdk8.1 dot11_phy_type_vht:8
 							wprintf(L"802.11ac PHY type\n");
 							break;
 						case dot11_phy_type_IHV_start:
@@ -742,8 +964,9 @@ int wmain()
 
 						wprintf(L"    PHY index:\t\t %u\n",
 								pConnectInfo->wlanAssociationAttributes.uDot11PhyIndex);
+
 						//TODO: RSSI
-						getRSSI(&hClient,&pIfInfo->InterfaceGuid);
+						//getRSSI(&hClient,&pIfInfo->InterfaceGuid);
 
 						wprintf(L"    Signal Quality:\t %d\n",
 								pConnectInfo->wlanAssociationAttributes.wlanSignalQuality);
@@ -843,8 +1066,16 @@ int wmain()
 				//TODO: does WlanScan (OID_802_11_BSSID_LIST_SCAN) is 
 				//This list includes BSSIDs for all BSSs responding on frequency channels that are permitted in the region in which the device is operating. The driver will return the contents of this list when queried by OID_802_11_BSSID_LIST.
 				//use OID_DOT11_SCAN_REQUEST
-				if(dwResult = WlanScan(hClient, &pIfInfo->InterfaceGuid, NULL, NULL, NULL) != ERROR_SUCCESS) {
-					throw("[x] Scan failed, check adapter is enabled");
+				if (1) {
+					if (dwResult = WlanScan(hClient, &pIfInfo->InterfaceGuid, NULL, NULL, NULL) != ERROR_SUCCESS) {
+						throw("[x] Scan failed, check adapter is enabled");
+					}
+				}
+				else {
+					//not work!!
+					if (DoWlanScan((LPOLESTR)&GuidString) != ERROR_SUCCESS) {
+						throw("[x] Scan failed, check adapter is enabled");
+					}
 				}
 				// 
 				UINT nRet;
@@ -854,8 +1085,9 @@ int wmain()
 					//XP just wait 5 sec
 					nRet = SetTimer(NULL,0,5000,TimerProc);
 				}
+				int iWait=0;
 				bWait = true;
-				while(bWait) {
+				while(bWait & (iWait<=50)) {
 					Sleep(100);
 					wprintf(L".");
 					//TODO: following will not let while keep out put "."
@@ -864,6 +1096,7 @@ int wmain()
 						GetMessage(&msg, NULL, 0, 0);
 						DispatchMessage(&msg);
 					}
+					iWait++;
 				}
 
 				wprintf(L"\n");
@@ -873,162 +1106,158 @@ int wmain()
 					KillTimer(NULL, nRet);
 				}
 			}
-			//WlanGetAvailableNetworkList
-			/*TODO: Get profile list for this interface?
-			dwResult = WlanGetAvailableNetworkList(hClient,  
-                &pIfInfo->InterfaceGuid,  
-                0,   
-                NULL,   
-                &pBssList);  
-			if (dwResult != ERROR_SUCCESS) {  
-                RETAILMSG(OUTPUT_LOGMSG,(L"WlanGetAvailableNetworkList failed with error: %u\r\n",  
-                    dwResult));  
-                dwRetVal = 1;  
-                // You can use FormatMessage to find out why the function failed   
-            } else {
-                RETAILMSG(OUTPUT_LOGMSG, (L"WLAN_AVAILABLE_NETWORK_LIST for this interface\r\n"));  
-                RETAILMSG(OUTPUT_LOGMSG,(L"Num Entries: %d\r\n", pBssList->dwNumberOfItems));  
-  
-                for (j = 0; j < pBssList->dwNumberOfItems; j++)   
-                {  
-                    pBssEntry = (WLAN_AVAILABLE_NETWORK *)&pBssList->Network[j];  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"  Profile Name[%u]:  %s\r\n", j, &pBssEntry->strProfileName));  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"  SSID[%u]:\t\t ", j));  
-                    if (pBssEntry->dot11Ssid.uSSIDLength == 0)  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"\r\n"));  
-                    else   
-                    {   
-                        CString str = _T("");  
-                        str = pBssEntry->dot11Ssid.ucSSID;  
-                      
-  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"%s\r\n", str));  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"%s\r\n", &pBssEntry->dot11Ssid.ucSSID));  
-                    }  
-  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"BSS Network type[%u]:\t ", j));  
-                    switch (pBssEntry->dot11BssType)  
-                    {  
-                    case dot11_BSS_type_infrastructure   :  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"Infrastructure (%u)\r\n", pBssEntry->dot11BssType));  
-                        break;  
-                    case dot11_BSS_type_independent:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"Infrastructure (%u)\r\n", pBssEntry->dot11BssType));  
-                        break;  
-                    default:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"Other (%lu)\r\n", pBssEntry->dot11BssType));  
-                        break;  
-                    }  
-  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"  Number of BSSIDs[%u]:\t %u\r\n", j, pBssEntry->uNumberOfBssids));  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"  Connectable[%u]:\t ", j));  
-                    if (pBssEntry->bNetworkConnectable)  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"Yes\r\n"));  
-                    else   
-                    {  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"No\r\n"));  
-                        RETAILMSG(OUTPUT_LOGMSG,(L" Not connectable WLAN_REASON_CODE value[%u]:\t %u\r\n", j,   
-                            pBssEntry->wlanNotConnectableReason));  
-                    }          
-  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"Number of PHY types supported[%u]:\t %u\r\n", j, pBssEntry->uNumberOfPhyTypes));  
-  
-                    if (pBssEntry->wlanSignalQuality == 0)  
-                        iRSSI = -100;  
-                    else if (pBssEntry->wlanSignalQuality == 100)     
-                        iRSSI = -50;  
-                    else  
-                        iRSSI = -100 + (pBssEntry->wlanSignalQuality/2);      
-  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"  Signal Quality[%u]:\t %u (RSSI: %i dBm)\r\n", j,   
-                        pBssEntry->wlanSignalQuality, iRSSI));  
-  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"  Security Enabled[%u]:\t ", j));  
-                    if (pBssEntry->bSecurityEnabled)  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"Yes\r\n"));  
-                    else  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"No\r\n"));  
-                    //身份驗證類型   
-                    RETAILMSG(OUTPUT_LOGMSG,(L"  Default AuthAlgorithm[%u]: ", j));  
-                    switch (pBssEntry->dot11DefaultAuthAlgorithm)   
-                    {  
-                    case DOT11_AUTH_ALGO_80211_OPEN:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"802.11 Open (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
-                        break;  
-                    case DOT11_AUTH_ALGO_80211_SHARED_KEY:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"802.11 Shared (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
-                        break;  
-                    case DOT11_AUTH_ALGO_WPA:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"WPA (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
-                        break;  
-                    case DOT11_AUTH_ALGO_WPA_PSK:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"WPA-PSK (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
-                        break;  
-                    case DOT11_AUTH_ALGO_WPA_NONE:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"WPA-None (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
-                        break;  
-                    case DOT11_AUTH_ALGO_RSNA:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"RSNA (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
-                        break;  
-                    case DOT11_AUTH_ALGO_RSNA_PSK:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"RSNA with PSK(%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
-                        break;  
-                    default:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"Other (%lu)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));  
-                        break;  
-                    }  
-  
-                    //加密類型   
-                    RETAILMSG(OUTPUT_LOGMSG,(L"  Default CipherAlgorithm[%u]: ", j));  
-                    switch (pBssEntry->dot11DefaultCipherAlgorithm)   
-                    {  
-                    case DOT11_CIPHER_ALGO_NONE:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"None (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
-                        break;  
-                    case DOT11_CIPHER_ALGO_WEP40:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"WEP-40 (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
-                        break;  
-                    case DOT11_CIPHER_ALGO_TKIP:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"TKIP (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
-                        break;  
-                    case DOT11_CIPHER_ALGO_CCMP:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"CCMP (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
-                        break;  
-                    case DOT11_CIPHER_ALGO_WEP104:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"WEP-104 (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
-                        break;  
-                    case DOT11_CIPHER_ALGO_WEP:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"WEP (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
-                        break;  
-                    default:  
-                        RETAILMSG(OUTPUT_LOGMSG,(L"Other (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));  
-                        break;  
-                    }  
-  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"  Flags[%u]:\t 0x%x", j, pBssEntry->dwFlags));  
-                    if (pBssEntry->dwFlags)   
-                    {  
-                        if (pBssEntry->dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED)  
-                            RETAILMSG(OUTPUT_LOGMSG,(L" - Currently connected"));  
-                        if (pBssEntry->dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED)  
-                            RETAILMSG(OUTPUT_LOGMSG,(L" - Has profile"));  
-                    }     
-                    RETAILMSG(OUTPUT_LOGMSG,(L"\r\n"));  
-  
-                    RETAILMSG(OUTPUT_LOGMSG,(L"\r\n"));  
-				}//for (j = 0; j < pBssList->dwNumberOfItems; j++)   
-			*/
+
+				//WlanGetAvailableNetworkList
+				/*
+				TODO: Get profile list for this interface?
+				dwResult = WlanGetAvailableNetworkList(hClient,
+				&pIfInfo->InterfaceGuid,
+				0, NULL, &pBssList);
+				if (dwResult != ERROR_SUCCESS) {
+				RETAILMSG(OUTPUT_LOGMSG,(L"WlanGetAvailableNetworkList failed with error: %u\r\n",
+				dwResult));
+				dwRetVal = 1;
+				// You can use FormatMessage to find out why the function failed
+				} else {
+				RETAILMSG(OUTPUT_LOGMSG, (L"WLAN_AVAILABLE_NETWORK_LIST for this interface\r\n"));
+				RETAILMSG(OUTPUT_LOGMSG,(L"Num Entries: %d\r\n", pBssList->dwNumberOfItems));
+
+				for (j = 0; j < pBssList->dwNumberOfItems; j++)
+				{
+				pBssEntry = (WLAN_AVAILABLE_NETWORK *)&pBssList->Network[j];
+				RETAILMSG(OUTPUT_LOGMSG,(L"  Profile Name[%u]:  %s\r\n", j, &pBssEntry->strProfileName));
+				RETAILMSG(OUTPUT_LOGMSG,(L"  SSID[%u]:\t\t ", j));
+				if (pBssEntry->dot11Ssid.uSSIDLength == 0)
+				RETAILMSG(OUTPUT_LOGMSG,(L"\r\n"));
+				else
+				{
+				CString str = _T("");
+				str = pBssEntry->dot11Ssid.ucSSID;
+
+
+				RETAILMSG(OUTPUT_LOGMSG,(L"%s\r\n", str));
+				RETAILMSG(OUTPUT_LOGMSG,(L"%s\r\n", &pBssEntry->dot11Ssid.ucSSID));
+				}
+
+				RETAILMSG(OUTPUT_LOGMSG,(L"BSS Network type[%u]:\t ", j));
+				switch (pBssEntry->dot11BssType)
+				{
+				case dot11_BSS_type_infrastructure   :
+				RETAILMSG(OUTPUT_LOGMSG,(L"Infrastructure (%u)\r\n", pBssEntry->dot11BssType));
+				break;
+				case dot11_BSS_type_independent:
+				RETAILMSG(OUTPUT_LOGMSG,(L"Infrastructure (%u)\r\n", pBssEntry->dot11BssType));
+				break;
+				default:
+				RETAILMSG(OUTPUT_LOGMSG,(L"Other (%lu)\r\n", pBssEntry->dot11BssType));
+				break;
+				}
+
+				RETAILMSG(OUTPUT_LOGMSG,(L"  Number of BSSIDs[%u]:\t %u\r\n", j, pBssEntry->uNumberOfBssids));
+				RETAILMSG(OUTPUT_LOGMSG,(L"  Connectable[%u]:\t ", j));
+				if (pBssEntry->bNetworkConnectable)
+				RETAILMSG(OUTPUT_LOGMSG,(L"Yes\r\n"));
+				else
+				{
+				RETAILMSG(OUTPUT_LOGMSG,(L"No\r\n"));
+				RETAILMSG(OUTPUT_LOGMSG,(L" Not connectable WLAN_REASON_CODE value[%u]:\t %u\r\n", j,
+				pBssEntry->wlanNotConnectableReason));
+				}
+
+				RETAILMSG(OUTPUT_LOGMSG,(L"Number of PHY types supported[%u]:\t %u\r\n", j, pBssEntry->uNumberOfPhyTypes));
+
+				if (pBssEntry->wlanSignalQuality == 0)
+				iRSSI = -100;
+				else if (pBssEntry->wlanSignalQuality == 100)
+				iRSSI = -50;
+				else
+				iRSSI = -100 + (pBssEntry->wlanSignalQuality/2);
+
+				RETAILMSG(OUTPUT_LOGMSG,(L"  Signal Quality[%u]:\t %u (RSSI: %i dBm)\r\n", j,
+				pBssEntry->wlanSignalQuality, iRSSI));
+
+				RETAILMSG(OUTPUT_LOGMSG,(L"  Security Enabled[%u]:\t ", j));
+				if (pBssEntry->bSecurityEnabled)
+				RETAILMSG(OUTPUT_LOGMSG,(L"Yes\r\n"));
+				else
+				RETAILMSG(OUTPUT_LOGMSG,(L"No\r\n"));
+				//身份驗證類型
+				RETAILMSG(OUTPUT_LOGMSG,(L"  Default AuthAlgorithm[%u]: ", j));
+				switch (pBssEntry->dot11DefaultAuthAlgorithm)
+				{
+				case DOT11_AUTH_ALGO_80211_OPEN:
+				RETAILMSG(OUTPUT_LOGMSG,(L"802.11 Open (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));
+				break;
+				case DOT11_AUTH_ALGO_80211_SHARED_KEY:
+				RETAILMSG(OUTPUT_LOGMSG,(L"802.11 Shared (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));
+				break;
+				case DOT11_AUTH_ALGO_WPA:
+				RETAILMSG(OUTPUT_LOGMSG,(L"WPA (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));
+				break;
+				case DOT11_AUTH_ALGO_WPA_PSK:
+				RETAILMSG(OUTPUT_LOGMSG,(L"WPA-PSK (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));
+				break;
+				case DOT11_AUTH_ALGO_WPA_NONE:
+				RETAILMSG(OUTPUT_LOGMSG,(L"WPA-None (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));
+				break;
+				case DOT11_AUTH_ALGO_RSNA:
+				RETAILMSG(OUTPUT_LOGMSG,(L"RSNA (%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));
+				break;
+				case DOT11_AUTH_ALGO_RSNA_PSK:
+				RETAILMSG(OUTPUT_LOGMSG,(L"RSNA with PSK(%u)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));
+				break;
+				default:
+				RETAILMSG(OUTPUT_LOGMSG,(L"Other (%lu)\r\n", pBssEntry->dot11DefaultAuthAlgorithm));
+				break;
+				}
+
+				//加密類型
+				RETAILMSG(OUTPUT_LOGMSG,(L"  Default CipherAlgorithm[%u]: ", j));
+				switch (pBssEntry->dot11DefaultCipherAlgorithm)
+				{
+				case DOT11_CIPHER_ALGO_NONE:
+				RETAILMSG(OUTPUT_LOGMSG,(L"None (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));
+				break;
+				case DOT11_CIPHER_ALGO_WEP40:
+				RETAILMSG(OUTPUT_LOGMSG,(L"WEP-40 (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));
+				break;
+				case DOT11_CIPHER_ALGO_TKIP:
+				RETAILMSG(OUTPUT_LOGMSG,(L"TKIP (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));
+				break;
+				case DOT11_CIPHER_ALGO_CCMP:
+				RETAILMSG(OUTPUT_LOGMSG,(L"CCMP (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));
+				break;
+				case DOT11_CIPHER_ALGO_WEP104:
+				RETAILMSG(OUTPUT_LOGMSG,(L"WEP-104 (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));
+				break;
+				case DOT11_CIPHER_ALGO_WEP:
+				RETAILMSG(OUTPUT_LOGMSG,(L"WEP (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));
+				break;
+				default:
+				RETAILMSG(OUTPUT_LOGMSG,(L"Other (0x%x)\r\n", pBssEntry->dot11DefaultCipherAlgorithm));
+				break;
+				}
+
+				RETAILMSG(OUTPUT_LOGMSG,(L"  Flags[%u]:\t 0x%x", j, pBssEntry->dwFlags));
+				if (pBssEntry->dwFlags)
+				{
+				if (pBssEntry->dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED)
+				RETAILMSG(OUTPUT_LOGMSG,(L" - Currently connected"));
+				if (pBssEntry->dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED)
+				RETAILMSG(OUTPUT_LOGMSG,(L" - Has profile"));
+				}
+				RETAILMSG(OUTPUT_LOGMSG,(L"\r\n"));
+
+				RETAILMSG(OUTPUT_LOGMSG,(L"\r\n"));
+				}//for (j = 0; j < pBssList->dwNumberOfItems; j++)
+				*/
+
             //WlanGetNetworkBssList, Vista above
 			char *pReserved=NULL;
 			DOT11_BSS_TYPE dot11BssType = dot11_BSS_type_any;
-
-			dwResult = WlanGetNetworkBssList(hClient,
-				&pIfInfo->InterfaceGuid,
-				NULL,
-				dot11BssType,
-				NULL,
-				pReserved, 
-				&pBssList);
+			//TODO: NDIS_802_11_BSSID_LIST_EX ? https://msdn.microsoft.com/en-us/library/windows/hardware/ff564113%28v=vs.85%29.aspx
+			dwResult = WlanGetNetworkBssList(hClient, &pIfInfo->InterfaceGuid,
+				NULL, dot11BssType, NULL, pReserved, &pBssList);
 
 			if (dwResult != ERROR_SUCCESS) {
 				wprintf(L"WlanGetNetworkBssList failed with error: %u\n",
@@ -1080,18 +1309,18 @@ int wmain()
 					//type
 					switch (pBssEntry->dot11BssPhyType) {
 					case dot11_phy_type_ofdm:
-						wprintf(L"%ls  ", L"11a");
+						wprintf(L"%ls  ", L"11a ");
 						break;
 					case dot11_phy_type_hrdsss:
-						wprintf(L"%ls  ", L"11b");					
+						wprintf(L"%ls  ", L"11b ");					
 						break;
 					case dot11_phy_type_erp:
-						wprintf(L"%ls  ", L"11g");
+						wprintf(L"%ls  ", L"11g ");
 						break;
 					case dot11_phy_type_ht:
-						wprintf(L"%ls  ", L"11n");
+						wprintf(L"%ls  ", L"11n ");
 						break;
-					case 8://11ac vht, sdk8.1, dot11_phy_type_vht
+					case dot11_phy_type_vht://11ac vht, sdk8.1, dot11_phy_type_vht:8
 						wprintf(L"%ls  ", L"11ac");
 						break;
 					default:
@@ -1099,7 +1328,7 @@ int wmain()
 						break;
 					}
 					//channel
-					wprintf(L"%4ld (%d)", (pBssEntry->ulChCenterFrequency)/1000, freqToChannel(pBssEntry->ulChCenterFrequency));
+					wprintf(L"%4ld (%3d)", (pBssEntry->ulChCenterFrequency)/1000, freqToChannel(pBssEntry->ulChCenterFrequency));
 					//current connected 
 					if (!_tcscmp(MACAddressStr, CurrentMACAddressStr)) {
 						wprintf(L" *");
@@ -1126,6 +1355,6 @@ int wmain()
         WlanFreeMemory(pIfList);
         pIfList = NULL;
     }
-
+	dwRetVal = CloseAllGUIDHandle();
     return dwRetVal;
 }
